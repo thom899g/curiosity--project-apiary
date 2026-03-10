@@ -1,0 +1,104 @@
+version: '3.8'
+services:
+  queen:
+    build: ./queen
+    container_name: apiary_queen
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - ENVIRONMENT=${ENVIRONMENT}
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+    volumes:
+      - ./shared/credentials.json:/app/credentials.json:ro
+      - ./queen/logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - apiary_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  bee-crypto-scraper:
+    build: ./bees/crypto_scraper
+    container_name: bee_crypto_scraper_1
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - BEE_ID=crypto_scraper_1_${HOSTNAME}
+      - BEE_TYPE=crypto_order_book_scraper
+      - MAX_CONCURRENT_TASKS=3
+    volumes:
+      - ./shared/credentials.json:/app/credentials.json:ro
+      - ./bees/crypto_scraper/cache:/app/cache
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+    networks:
+      - apiary_network
+
+  bee-sentiment-miner:
+    build: ./bees/sentiment_miner
+    container_name: bee_sentiment_miner_1
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - BEE_ID=sentiment_miner_1_${HOSTNAME}
+      - BEE_TYPE=social_sentiment_miner
+      - TWITTER_BEARER_TOKEN=${TWITTER_BEARER_TOKEN}
+    volumes:
+      - ./shared/credentials.json:/app/credentials.json:ro
+    restart: unless-stopped
+    networks:
+      - apiary_network
+
+  sentinel-stuck-tasks:
+    build: ./sentinels/stuck_tasks
+    container_name: sentinel_stuck_tasks
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - CHECK_INTERVAL=300
+      - STUCK_THRESHOLD_SECONDS=600
+    volumes:
+      - ./shared/credentials.json:/app/credentials.json:ro
+    restart: unless-stopped
+    networks:
+      - apiary_network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: apiary_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    restart: unless-stopped
+    networks:
+      - apiary_network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: apiary_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/console_templates'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - apiary_network
+
+networks:
+  apiary_network:
+    driver: bridge
+
+volumes:
+  prometheus_data:
